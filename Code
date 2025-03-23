@@ -1,0 +1,868 @@
+//AHB Master
+module ahb_master(
+input hclk,
+input hresetn,
+input enable,
+input [31:0] data_in_a,
+input [31:0] data_in_b,
+input [31:0] addr,
+input wr,
+input hreadyout,
+input hresp,
+input [31:0] hrdata,
+input [1:0] slave_sel,
+output reg [1:0] sel,
+output reg [31:0] haddr,
+output reg hwrite,
+output reg [2:0] hsize,
+output reg [2:0] hburst, //Indicates Type of burst operation such as fixed type, increment type and 4-beat wrap and 4-beat increment type
+output reg [3:0] hprot, 
+output reg [1:0] htrnas, //Indicates the type of transfer such as idle, busy, sequential and nonSequential. 
+output reg hready,
+output reg [31:0] hwdata,
+output reg [32:0] dout);
+//parameters used in state machine
+reg [1:0] present_state,next_state;
+parameter idle=2'b00;
+parameter s1=2'b01;
+parameter s2=2'b10;
+parameter s3=2'b11;
+//present state logic
+always@(posedge hclk)
+begin
+if (!hresetn)
+begin
+present_state <= idle;
+end
+else
+begin
+present_state <= next_state;
+end
+end
+//next state logic
+always@(*)
+begin
+case (present_state)
+idle: 
+begin
+sel <= 2'b00;
+haddr <= 32'h0000_0000;
+hwrite <= 1'b0;
+hsize <= 3'b000;
+hburst <= 3'b000;
+hprot <= 4'b0000;
+htrnas <= 2'b00;
+hready <= 1'b0;
+hwdata<=32'h0000_0000;
+dout <= 32'h0000_0000;
+if (enable == 1'b1)
+begin
+next_state = s1;
+end
+else
+begin
+next_state <= idle;
+end
+end
+s1: 
+begin
+sel <= slave_sel;
+haddr <= addr;
+hwrite <= wr;
+hburst<= 3'b000;
+hready <= 1'b1;
+hwdata<= data_in_a + data_in_b;
+dout <= dout;
+if (wr == 1'b1)
+begin
+next_state = s2;
+end
+else
+begin
+next_state = s3;
+end
+end
+
+s2: 
+begin
+sel <= slave_sel;
+haddr <= addr;
+hwrite <= wr;
+hburst<= 3'b000;
+hready <= 1'b1;
+hwdata<= data_in_a + data_in_b;
+dout <= dout;
+if(enable == 1'b1)
+begin
+    next_state <= s1;
+	 end
+else
+begin
+    next_state <= idle;
+	 end
+	 end
+s3:
+begin
+sel <= slave_sel;
+haddr <= addr;
+hwrite <= wr; 
+hburst<= 3'b000;
+hready <= 1'b1;
+hwdata<= hwdata;
+dout <= dout;
+if (enable == 1'b1)
+begin
+next_state = s1;
+end
+else
+begin
+next_state = idle;
+end
+end
+
+default: 
+begin
+sel <= slave_sel;
+haddr <= haddr; 
+hwrite <= hwrite; 
+hburst<= hburst;
+hready <= 1'b0; 
+hwdata<= hwdata; 
+dout <= dout;
+next_state = idle;
+end
+endcase
+end
+endmodule
+
+module ahb_slave (
+input hclk,
+input hresetn,
+input hsel,
+input [31:0] haddr,
+input hwrite,
+input [2:0] hsize,
+input [2:0] hburst,
+input [3:0] hprot,
+input [1:0] htrans,
+input hmastlock,
+input [31:0] hwdata,
+input hready,//when the HREADY signal is high indicates theat the transfer is finished by the slave
+output reg hreadyout,//output of slave indicate the status of transfer
+output reg hresp,
+output reg [31:0] hrdata);
+reg [31:0] mem [31:0];
+reg [4:0] waddr;
+reg [4:0] raddr;
+reg [1:0] present_state; 
+reg [1:0] next_state; 
+parameter idle = 2'b00; 
+parameter s1 = 2'b01;
+parameter s2 = 2'b10;
+parameter s3 = 2'b11;
+reg single_flag;
+reg incr_flag;
+reg incr4_flag;
+reg incr8_flag;
+reg wrap4_flag;
+reg wrap8_flag;
+reg incr16_flag;
+reg wrap16_flag;
+
+
+always@(posedge hclk)
+begin
+if (!hresetn)
+begin
+present_state <= idle;
+end
+
+else
+begin
+present_state <= next_state;
+end
+end
+
+//next state logic
+always@ (posedge hclk)
+begin
+case (present_state)
+idle:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b0;
+incr4_flag = 1'b0;
+incr16_flag = 1'b0;
+if (hsel==1'b1)
+begin
+next_state = s1;
+end
+else
+begin
+next_state = idle;
+end
+end
+
+s1:
+begin 
+case(hburst)
+3'b000:
+begin
+single_flag = 1'b1; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b0;
+incr4_flag = 1'b0;
+incr16_flag = 1'b0;
+end
+
+3'b001:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b1;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b0;
+incr4_flag = 1'b0;
+incr16_flag = 1'b0;
+incr8_flag = 1'b0;
+end
+
+3'b010:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b1;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b0;
+incr4_flag = 1'b0;
+incr16_flag = 1'b0;
+incr8_flag = 1'b0;
+end
+
+3'b011:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b0;
+incr4_flag = 1'b1;
+incr16_flag = 1'b0;
+incr8_flag = 1'b0;
+end
+
+3'b100:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b1;
+wrap16_flag=1'b0;
+incr4_flag = 1'b0;
+incr16_flag = 1'b0;
+incr8_flag = 1'b0;
+end
+
+3'b101:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b0;
+incr4_flag = 1'b0;
+incr16_flag = 1'b0;
+incr8_flag = 1'b1;
+end
+
+3'b110:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b1;
+incr4_flag = 1'b0;
+incr16_flag = 1'b0;
+incr8_flag = 1'b1;
+end
+
+3'b111:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b0;
+incr4_flag = 1'b0;
+incr16_flag = 1'b1;
+incr8_flag = 1'b0;
+end
+
+default:
+begin
+single_flag = 1'b0; 
+incr_flag = 1'b0;
+wrap4_flag = 1'b0;
+wrap8_flag= 1'b0;
+wrap16_flag=1'b0;
+incr4_flag = 1'b0;
+incr16_flag = 1'b0;
+incr8_flag = 1'b0;
+end
+endcase
+//write operation
+if((hwrite == 1'b1) && (hready == 1'b1))
+begin
+next_state = s2;
+end
+//read operation
+else if((hwrite==1'b0) && (hready ==1'b1))
+begin
+next_state =s3;
+end
+else
+begin
+next_state=s1;
+end
+end
+
+s2:
+begin 
+case(hburst)
+3'b000:
+begin
+if(hsel == 1'b1)
+begin
+next_state = s1; 
+end
+else
+begin
+next_state  = idle;
+end
+end
+//incrementing burst of undefined length
+3'b001:
+begin
+next_state = s2;
+end
+//4 - beat wrapping burst
+3'b010:
+begin
+next_state = s2;
+end
+//4-beat incrementing burst
+3'b011:
+begin
+next_state = s2;
+end
+3'b100:
+begin
+next_state = s2;
+end
+3'b101:
+begin
+next_state = s2;
+end
+
+3'b110:begin
+next_state = s2;
+end
+
+3'b111:begin
+next_state = s2;
+end
+
+default:
+begin
+if(hsel==1'b1)
+begin
+next_state=s1;
+end
+else
+begin
+next_state=idle;
+end
+end
+endcase
+end
+
+s3:
+begin
+case(hburst)
+3'b000:
+begin
+if(hsel==1'b1)
+begin
+next_state=s1;
+end
+else
+begin
+next_state=idle;
+end
+end
+
+3'b001:
+begin
+next_state=s3;
+end
+
+3'b010:
+begin
+next_state=s3;
+end
+
+3'b011:
+begin
+next_state=s3;
+end
+
+3'b100:
+begin
+next_state=s3;
+end
+
+3'b101:
+begin
+next_state=s3;
+end
+
+3'b110:
+begin
+next_state=s3;
+end
+
+
+3'b111:
+begin
+next_state=s3;
+end
+
+default:
+begin
+if(hsel==1'b1)
+begin
+next_state=s1;
+end
+else
+begin
+next_state=idle;
+end
+end
+endcase
+end
+default:
+begin
+next_state=idle;
+end
+endcase
+end
+
+always@(posedge hclk)
+begin
+if (!hresetn)
+begin
+hreadyout <= 1'b0;
+hresp <= 1'b0;
+hrdata <= 1'b0;
+waddr <= waddr;
+raddr <= raddr;
+end
+else
+begin
+case (next_state)
+idle :
+begin
+hreadyout <= 1'b0;
+hresp <= 1'b0;
+hrdata <= hrdata;
+waddr <= waddr;
+raddr <= raddr;
+end
+s1:
+begin
+hreadyout <= 1'b0;
+hresp <= 1'b0;
+hrdata <= hrdata;
+waddr <= haddr;
+raddr <= haddr;
+end
+s2://write transfer
+begin
+case({single_flag,incr_flag,wrap4_flag,incr4_flag,wrap8_flag,incr8_flag,wrap16_flag,incr16_flag})
+//single transfer
+8'b1000_0000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+mem[waddr]<=hwdata;
+end
+//incrementing
+8'b0100_0000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+mem[waddr]<=hwdata;
+waddr<=waddr+1'b1;
+end
+//wrap 4
+8'b0010_0000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+if(waddr<(haddr+2'd3))
+begin
+waddr<=waddr+1;
+end
+else
+begin
+mem[waddr]<=hwdata;
+waddr<=haddr;
+end
+end
+
+8'b0001_0000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+mem[waddr]<=hwdata;
+waddr<=waddr +1;
+end
+
+8'b0000_1000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+if(waddr<(haddr+3'd7))
+begin
+mem[waddr]<=hwdata;
+waddr<=waddr+1'b1;
+end
+else
+begin
+mem[waddr]<=hwdata;
+waddr<=haddr;
+end
+end
+
+8'b0000_0100:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+mem[waddr]<=hwdata;
+waddr<=waddr +1'b1;
+end
+
+8'b0000_0010:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+if(waddr<(haddr+3'd15))
+begin
+mem[waddr]<=hwdata;
+waddr<=waddr+1'b1;
+end
+else
+begin
+mem[waddr]<=hwdata;
+waddr<=haddr;
+end
+end
+
+default:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+end
+endcase
+end
+
+s3://read transfer
+begin
+case({single_flag,incr_flag,wrap4_flag,incr4_flag,wrap8_flag,incr8_flag,wrap16_flag,incr16_flag})
+8'b1000_0000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+hrdata<=mem[raddr];
+end
+8'b0100_0000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+hrdata<=mem[raddr];
+raddr<=raddr+1;
+end
+
+8'b0010_0000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+if(hrdata<(haddr+2'd3))
+begin
+hrdata<=mem[raddr];
+raddr<=raddr+1'b1;
+end
+else
+begin
+hrdata<=mem[raddr];
+raddr<= haddr;
+end
+end
+
+8'b0001_0000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+hrdata<=mem[raddr];
+raddr<=raddr+1'b1;
+end
+
+8'b0000_1000:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+if(hrdata<(haddr+3'd7))
+begin
+hrdata<=mem[raddr];
+raddr<=raddr+1'b1;
+end
+else
+begin
+hrdata<=mem[raddr];
+raddr<=haddr;
+end
+end
+
+8'b0000_0100:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+hrdata<=mem[raddr];
+raddr<=raddr+1'b1;
+end
+
+8'b0000_0010:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+if(hrdata<(haddr+4'd15))
+begin
+hrdata<=mem[raddr];
+raddr<=raddr+1'b1;
+end
+else
+begin
+hrdata<=mem[raddr];
+raddr<=haddr;
+end
+end
+
+8'b0000_0001:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+hrdata<=mem[raddr];
+raddr<=raddr+1'b1;
+end
+
+default:
+begin
+hreadyout<=1'b1;
+hresp<=1'b0;
+end
+endcase
+end
+
+default:
+begin
+hreadyout<=1'b0;
+hresp<=1'b0;
+waddr<=waddr;
+raddr<=raddr;
+end
+endcase
+end
+end
+endmodule
+
+module ahb_decoder(input [1:0]sel,output reg hsel_1,output reg hsel_2,output reg hsel_3,output reg hsel_4);
+always@(*)
+begin
+case(sel)
+2'b00:
+begin
+hsel_1=1'b1;
+hsel_2=1'b0;
+hsel_3=1'b0;
+hsel_4=1'b0;
+end
+2'b01:
+begin
+hsel_1=1'b0;
+hsel_2=1'b1;
+hsel_3=1'b0;
+hsel_4=1'b0;
+end
+2'b10:
+begin
+hsel_1=1'b0;
+hsel_2=1'b0;
+hsel_3=1'b1;
+hsel_4=1'b0;
+end
+2'b11:
+begin
+hsel_1=1'b0;
+hsel_2=1'b0;
+hsel_3=1'b0;
+hsel_4=1'b1;
+end
+default:
+begin
+hsel_1=1'b0;
+hsel_2=1'b0;
+hsel_3=1'b0;
+hsel_4=1'b0;
+end
+endcase
+end
+endmodule
+
+module multuplexer(
+input [31:0] hrdata_1,
+input [31:0] hrdata_2,
+input [31:0] hrdata_3,
+input [31:0] hrdata_4,
+input [1:0] sel,
+input hreadyout_1,
+input hreadyout_2,
+input hreadyout_3,
+input hreadyout_4,
+input hresp_1,
+input hresp_2,
+input hresp_3,
+input hresp_4,
+output reg [31:0] hrdata,
+output reg hreadyout,
+output reg hresp);
+always@(*)
+begin
+case(sel)
+2'b00:
+begin
+hrdata=hrdata_1;
+hreadyout=hreadyout_1;
+hresp=hresp_1;
+end
+2'b01:
+begin
+hrdata=hrdata_2;
+hreadyout=hreadyout_2;
+hresp=hresp_2;
+end
+2'b10:
+begin
+hrdata=hrdata_3;
+hreadyout=hreadyout_3;
+hresp=hresp_3;
+end
+2'b11:
+begin
+hrdata=hrdata_4;
+hreadyout=hreadyout_4;
+hresp=hresp_4;
+end
+endcase
+end
+endmodule
+
+module assignment3(
+input hclk,
+input hresetn,
+input enable,
+input [31:0] data_in_a,
+input [31:0] data_in_b,
+input [31:0] addr,
+input wr,
+input [1:0]slave_sel,
+input [1:0]htrans,
+input hmastlock,
+input hresp_1,
+input hresp_2,
+input hresp_3,
+input hresp_4,
+output [32:0] data_out,
+output [31:0]hwdata);
+wire [1:0] sel;
+wire [31:0] haddr;
+wire hwrite;
+wire [3:0]hprot;
+wire [2:0]hsize;
+wire [2:0]hburst;
+//slave_1
+wire [31:0] hrdata_1;
+wire hreadyout_1;
+//slave_2
+wire [31:0] hrdata_2;
+wire hreadyout_2;
+//slave_3
+wire [31:0] hrdata_3;
+wire hreadyout_3;
+//slave_4
+wire [31:0] hrdata_4;
+wire hreadyout_4;
+//decodr
+wire hsel_1;
+wire hsel_2;
+wire hsel_3;
+wire hsel_4;
+//mux
+wire [3:0]hrdata;
+wire hreadyout;
+wire hresp;
+//ahb master
+ahb_master master(.hclk(hclk),.hresetn(hresetn),.enable(enable),.data_in_a(data_in_a),
+.data_in_b(data_in_b),.addr(addr),.wr(wr),
+.hreadyout(hreadyout),.hresp(hresp),.hrdata(hrdata),
+.slave_sel(slave_sel),.sel(sel),.haddr(haddr),
+.hsize(hsize),.hwrite(hwrite),.hburst(hburst),.hprot(hprot),
+.htrnas(htrnas),.hready(hready),.hwdata(hwdata),
+.dout(dout));
+//decoder
+ahb_decoder decoder(.sel(sel),.hsel_1(hsel_1),.hsel_2(hsel_2),.hsel_3(hsel_3),
+.hsel_4(hsel_4));
+//ahb_slave1
+ahb_slave slave_1(.hclk(hclk),.hresetn(hresetn),.hsel(hsel_1),.haddr(haddr),
+.hwrite(hwrite),.hsize(hsize),.hburst(hburst),.hprot(hprot),
+.htrans(htrans),.hmastlock(hmastlock),.hwdata(hwdata),.hready(hready),
+.hreadyout(hreadyout_1),.hresp(hresp),.hrdata(hrdata_1));
+//ahb_slave2
+ahb_slave slave_2(.hclk(hclk),.hresetn(hresetn),.hsel(hsel_2),.haddr(haddr),
+.hwrite(hwrite),.hsize(hsize),.hburst(hburst),.hprot(hprot),
+.htrans(htrans),.hmastlock(hmastlock),.hwdata(hwdata),.hready(hready),
+.hreadyout(hreadyout_2),.hresp(hresp),.hrdata(hrdata_2));
+//ahb_slave3
+ahb_slave slave_3(.hclk(hclk),.hresetn(hresetn),.hsel(hsel_3),.haddr(haddr),
+.hwrite(hwrite),.hsize(hsize),.hburst(hburst),.hprot(hprot),
+.htrans(htrans),.hmastlock(hmastlock),.hwdata(hwdata),.hready(hready),
+.hreadyout(hreadyout_3),.hresp(hresp),
+.hrdata(hrdata_3));
+//ahb_slave4
+ahb_slave slave_4(.hclk(hclk),.hresetn(hresetn),.hsel(hsel_4),.haddr(haddr),
+.hwrite(hwrite),.hsize(hsize),.hburst(hburst),.hprot(hprot),
+.htrans(htrans),.hmastlock(hmastlock),.hwdata(hwdata),.hready(hready),
+.hreadyout(hreadyout_4),.hresp(hresp),
+.hrdata(hrdata_4));
+//mux
+multuplexer mux(.hrdata_1(hrdata_1),.hrdata_2(hrdata_2),.hrdata_3(hrdata_3),
+.hrdata_4(hrdata_4),.hreadyout_1(hreadyout_1),.hreadyout_2(hreadyout_2),
+.hreadyout_3(hreadyout_3),.hreadyout_4(hreadyout_4),.hresp_1(hresp_1),
+.hresp_2(hresp_2),.hresp_3(hresp_3),.hresp_4(hresp_4),.sel(sel),
+.hrdata(hrdata),.hreadyout(hreadyout),.hresp(hresp));
+endmodule
